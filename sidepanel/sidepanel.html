@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <title>PCare Bot</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header>
+    <h1>PCare Bot — LABKESDA Sumenep</h1>
+    <label class="cursor-picker" title="Ikon kursor bot di halaman PCare (bukan kursor mouse Anda)">
+      Kursor bot:
+      <select id="cursorIconSelect">
+        <option value="blue_cursor.png">Biru</option>
+        <option value="neon_cursor.png">Neon</option>
+        <option value="orange_cursor.png">Oranye</option>
+        <option value="outline_cursor.png">Outline</option>
+        <option value="pink_cursor.png">Pink</option>
+      </select>
+      <img id="cursorIconPreview" class="cursor-preview" alt="Preview kursor" width="24" height="24" />
+    </label>
+    <button id="loginSettingsBtn" title="Kelola login PCare">⚙ Login</button>
+  </header>
+
+  <section class="panel">
+    <h2>1. Sumber Data</h2>
+    <button id="pickExcelBtn">Pilih File Excel...</button>
+    <button id="reconnectFileBtn" class="hidden"></button>
+    <span id="excelFileName" class="muted">Belum ada file dipilih.</span>
+    <div id="sheetPickerRow" class="hidden">
+      <label for="sheetSelect">Sheet:</label>
+      <select id="sheetSelect"></select>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>2. Alur</h2>
+    <label><input type="radio" name="mode" value="pendaftaran" checked /> Pendaftaran</label>
+    <label><input type="radio" name="mode" value="pelayanan" /> Pelayanan</label>
+    <label><input type="radio" name="mode" value="print" /> Print SPP &amp; FKPP</label>
+
+    <div id="pendaftaranOnly">
+      <label for="batchDate">Tanggal batch:</label>
+      <input type="date" id="batchDate" />
+      <span id="batchDateSynced" class="muted small"></span>
+      <br />
+      <button id="overrideDateBtn" type="button">📆 Beda tanggal untuk pasien tertentu</button>
+    </div>
+    <div id="pelayananOnly" class="hidden">
+      <label for="tenagaMedisSelect">Tenaga Medis:</label>
+      <select id="tenagaMedisSelect"></select>
+      <p class="muted small">
+        Cetak FKPP/SPP sekarang jadi fitur terpisah — alur ini berhenti setelah hasil Non
+        Kapitasi selesai diisi.
+      </p>
+      <button id="ambilDataKunjunganBtn" type="button">🔍 Ambil Data Kunjungan Sebelumnya</button>
+      <p class="muted small">
+        Kalau bot berhenti sambil meminta Anda klik baris riwayat secara manual: klik baris
+        itu di jendela Chrome, tunggu datanya terlihat muncul, lalu klik tombol ini untuk
+        melihatnya di sini.
+      </p>
+    </div>
+    <div id="printOnly" class="hidden">
+      <p class="muted small">
+        Mencari No.Pendaftaran, memastikan kunjungan LABKESDA Sumenep untuk tanggal yang
+        sama sudah ada, lalu mencetak SPP dan FKPP.
+      </p>
+      <label><input type="checkbox" id="connectPrinterChk" /> Hubungkan ke printer</label>
+      <input type="text" id="printPrinterName" placeholder="Nama printer" disabled />
+      <p class="muted small">
+        Tidak dicentang = PDF SPP &amp; FKPP otomatis disimpan ke Downloads saja (tidak
+        dicetak fisik).
+      </p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>3. Kontrol</h2>
+    <button id="startBtn">▶ Mulai</button>
+    <button id="pauseBtn" disabled>⏸ Jeda</button>
+    <button id="resumeBtn" disabled>⏵ Lanjut</button>
+    <button id="stopBtn" disabled>⏹ Stop</button>
+    <span id="runStatus" class="muted">idle</span>
+  </section>
+
+  <section class="panel">
+    <h2>4. Data Pasien</h2>
+    <div class="table-toolbar">
+      <label><input type="checkbox" id="selectAll" /> Pilih semua</label>
+      <button id="assignDateBtn">📅 Berikan Tanggal Pendaftaran</button>
+      <span id="patientCount" class="muted"></span>
+    </div>
+    <div class="table-wrap">
+      <table id="patientTable">
+        <thead>
+          <tr>
+            <th></th>
+            <th>No</th>
+            <th>Nama</th>
+            <th>DM/HT</th>
+            <th>No.BPJS</th>
+            <th>Tgl Layanan</th>
+            <th id="thStatusDaftar" class="toggle-header" title="Klik untuk centang/hapus centang semua Status Daftar">Status Daftar</th>
+            <th id="thStatusLayanan" class="toggle-header" title="Klik untuk centang/hapus centang semua Status Layanan">Status Layanan</th>
+          </tr>
+        </thead>
+        <tbody id="patientTableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Log</h2>
+    <div id="logPanel"></div>
+  </section>
+
+  <div id="loginModalOverlay" class="modal-overlay hidden">
+    <div class="modal-box">
+      <h3>Login PCare</h3>
+      <label for="usernameInput">Username</label>
+      <input type="text" id="usernameInput" autocomplete="off" />
+      <label for="passwordInput">Password</label>
+      <input type="password" id="passwordInput" autocomplete="off" />
+      <div class="modal-actions">
+        <button id="saveCredsBtn">Simpan</button>
+        <button id="clearCredsBtn">Hapus</button>
+        <button id="closeCredsBtn">Tutup</button>
+      </div>
+      <p class="muted small">
+        Disimpan lokal di penyimpanan ekstensi Chrome (dilindungi Chrome pada level sistem operasi,
+        sama seperti data ekstensi lain) — tidak dikirim ke server manapun selain PCare saat login.
+      </p>
+    </div>
+  </div>
+
+  <div id="assignDateModalOverlay" class="modal-overlay hidden">
+    <div class="modal-box modal-box--wide">
+      <h3>Berikan Tanggal Pendaftaran</h3>
+      <p class="muted small">
+        Untuk pasien yang sudah terdaftar di PCare tapi tanggalnya belum tercatat di sini
+        (mis. didaftarkan manual, atau dari sesi bot sebelumnya). Centang/uncek tiap pasien,
+        atur tanggalnya masing-masing (boleh beda-beda), lalu Simpan.
+      </p>
+      <label><input type="checkbox" id="assignSelectAll" checked /> Pilih semua di bawah</label>
+      <div class="assign-date-bulk">
+        <input type="date" id="assignDateBulkValue" />
+        <button id="assignDateBulkApplyBtn">Isi tanggal ini ke semua yang dicentang</button>
+      </div>
+      <div id="assignDateList" class="assign-date-list"></div>
+      <div class="modal-actions">
+        <button id="assignDateSaveBtn">Simpan</button>
+        <button id="assignDateCloseBtn">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="overrideDateModalOverlay" class="modal-overlay hidden">
+    <div class="modal-box modal-box--wide">
+      <h3>Tanggal Pendaftaran Berbeda per Pasien</h3>
+      <p class="muted small">
+        Semua pasien terpilih otomatis memakai Tanggal batch di atas. Centang pasien yang
+        tanggal pendaftarannya berbeda dan atur tanggalnya sendiri — hanya berlaku untuk
+        proses Pendaftaran yang akan dijalankan, tidak mengubah Tanggal batch itu sendiri.
+      </p>
+      <div id="overrideDateList" class="assign-date-list"></div>
+      <div class="modal-actions">
+        <button id="overrideDateSaveBtn">Terapkan</button>
+        <button id="overrideDateClearBtn">Hapus Semua Override</button>
+        <button id="overrideDateCloseBtn">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="recommendModalOverlay" class="modal-overlay hidden">
+    <div class="modal-box">
+      <h3 id="recommendTitle"></h3>
+      <p id="recommendBody" class="small"></p>
+      <div id="recommendPatientList" class="muted small"></div>
+      <div class="modal-actions">
+        <button id="recommendYesBtn"></button>
+        <button id="recommendNoBtn">Nanti saja</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="vitalsModalOverlay" class="modal-overlay hidden">
+    <div class="modal-box modal-box--wide">
+      <h3>Data Kunjungan Sebelumnya</h3>
+      <p class="muted small">Diambil langsung dari halaman PCare saat ini, apa adanya.</p>
+      <div id="vitalsModalBody" class="small"></div>
+      <div class="modal-actions">
+        <button id="vitalsModalCloseBtn">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../vendor/xlsx.full.min.js"></script>
+  <script src="../shared/pcareData.js"></script>
+  <script src="excelStore.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
