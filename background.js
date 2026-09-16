@@ -474,7 +474,6 @@ async function processBatch(payload, myGeneration) {
   };
   chrome.tabs.onRemoved.addListener(onWorkingTabRemoved);
 
-  const succeeded = [];
   const needsPendaftaran = [];
 
   try {
@@ -502,15 +501,12 @@ async function processBatch(payload, myGeneration) {
             status: 'done',
             tanggalLayanan: tanggalLayanan.toISOString(),
           });
-          succeeded.push(patient);
         } else if (mode === 'print') {
           await runCetakForPatient(tabId, patient, printerName, myGeneration);
           postPatientUpdate({ rowNumber: patient.rowNumber, stage: 'print', status: 'done' });
-          succeeded.push(patient);
         } else {
           await runPelayananForPatient(tabId, patient, tenagaMedis, myGeneration);
           postPatientUpdate({ rowNumber: patient.rowNumber, stage: 'pelayanan', status: 'done' });
-          succeeded.push(patient);
         }
       } catch (err) {
         if (err instanceof StopRequested) break; // clean stop mid-patient — not a failure, don't record one
@@ -541,13 +537,13 @@ async function processBatch(payload, myGeneration) {
             patients: needsPendaftaran.map((p) => ({ rowNumber: p.rowNumber, nama: p.nama })),
           });
         }
-        if (mode === 'pendaftaran' && succeeded.length > 0) {
-          broadcast({
-            evt: 'recommendation',
-            kind: 'run-pelayanan',
-            patients: succeeded.map((p) => ({ rowNumber: p.rowNumber, nama: p.nama })),
-          });
-        }
+        // The "move successes on to the next stage" and "retry what's still failing"
+        // recommendations are now computed client-side in sidepanel.js's
+        // checkRunCompletionRecommendations(), triggered by the postStatus('done') call
+        // above — it reads state.patients' CURRENT (cumulative-across-retries) status
+        // instead of this single run's local `succeeded` list, which is what makes "20
+        // total, 10 fail, retry, now 15 succeeded" recommend the true running total of 15,
+        // not just whatever succeeded in the very last round.
       }
     }
   } catch (err) {
