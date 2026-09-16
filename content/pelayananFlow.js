@@ -517,109 +517,231 @@
     }
   }
 
+  // Requested explicitly: retry each individual lab result up to 3 times before giving up —
+  // confirmed live (Ureum for HAKIMA, Kreatinin for HALIMA) that a save can fail with no
+  // error at all — PCare's own confirmation toast simply never showed up within the wait —
+  // even though nothing was wrong with the input. Each attempt redoes the WHOLE
+  // select+type+click sequence, not just re-clicking Simpan, since a failed save can leave
+  // the page in either the list or form view depending on what went wrong.
+  const SAVE_RETRY_MAX_ATTEMPTS = 3;
+
   async function fillKimiaDarahItem(itemLabel, rawValue, patient, log) {
-    await pastikanFormKimiaDarah();
-    await pickSelect2ById("jnsPelayanan_slc", itemLabel, { exact: false });
+    let lastError = null;
+    for (let attempt = 1; attempt <= SAVE_RETRY_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        await pastikanFormKimiaDarah();
 
-    const hasilInput = document.querySelector("#tabDet_12 #hasil_txt");
-    if (!hasilInput)
-      throw new Error(
-        `Field Hasil untuk "${itemLabel}" (Kimia Darah) tidak ditemukan.`,
-      );
-    await humanType(hasilInput, String(rawValue).replace(",", "."));
+        // Safety check before retrying (never on the first attempt): if the PREVIOUS
+        // attempt actually saved server-side despite its confirmation toast not showing in
+        // time, the item is now in the results table — treat that as success instead of
+        // risking a duplicate/double-billed entry by submitting it again.
+        if (attempt > 1) {
+          const existing = existingPelayananNames("daftarPelayanan_tbl");
+          if (containsLabel(existing, itemLabel)) {
+            log(
+              "info",
+              `${patient.nama}: Kimia Darah "${itemLabel}" ternyata sudah tersimpan dari percobaan sebelumnya — tidak diulang.`,
+            );
+            return;
+          }
+        }
 
-    const simpanBtn = document.querySelector("#tabDet_12 button#simpan_btn");
-    if (!simpanBtn)
-      throw new Error("Tombol Simpan (Kimia Darah) tidak ditemukan.");
-    await humanClick(simpanBtn);
+        await pickSelect2ById("jnsPelayanan_slc", itemLabel, { exact: false });
 
-    const { ok, message } = await waitForSaveNotify();
-    if (!ok) {
-      throw new Error(
-        `${patient.nama}: gagal menyimpan "${itemLabel}" (Kimia Darah)` +
-          (message
-            ? ` — ${message}`
-            : " (tidak ada notifikasi konfirmasi dari PCare)."),
-      );
+        const hasilInput = document.querySelector("#tabDet_12 #hasil_txt");
+        if (!hasilInput)
+          throw new Error(
+            `Field Hasil untuk "${itemLabel}" (Kimia Darah) tidak ditemukan.`,
+          );
+        await humanType(hasilInput, String(rawValue).replace(",", "."));
+
+        const simpanBtn = document.querySelector(
+          "#tabDet_12 button#simpan_btn",
+        );
+        if (!simpanBtn)
+          throw new Error("Tombol Simpan (Kimia Darah) tidak ditemukan.");
+        await humanClick(simpanBtn);
+
+        const { ok, message } = await waitForSaveNotify();
+        if (!ok) {
+          throw new Error(
+            `gagal menyimpan "${itemLabel}" (Kimia Darah)` +
+              (message
+                ? ` — ${message}`
+                : " (tidak ada notifikasi konfirmasi dari PCare)."),
+          );
+        }
+        log(
+          "info",
+          `${patient.nama}: Kimia Darah "${itemLabel}" = ${rawValue} tersimpan (${message}).`,
+        );
+        return;
+      } catch (err) {
+        lastError = err;
+        if (attempt < SAVE_RETRY_MAX_ATTEMPTS) {
+          log(
+            "warn",
+            `${patient.nama}: percobaan ke-${attempt} simpan "${itemLabel}" (Kimia Darah) gagal — mencoba lagi (${attempt + 1}/${SAVE_RETRY_MAX_ATTEMPTS})... (${err.message})`,
+          );
+          await humanPause(600, 1000);
+        }
+      }
     }
-    log(
-      "info",
-      `${patient.nama}: Kimia Darah "${itemLabel}" = ${rawValue} tersimpan (${message}).`,
+    throw new Error(
+      `${patient.nama}: ${lastError.message} — sudah dicoba ${SAVE_RETRY_MAX_ATTEMPTS}x.`,
     );
   }
 
   // Confirmed live: this dropdown is a PLAIN <select> (not select2), so a direct
   // value+change is both correct and simpler/more reliable than the select2 machinery.
   async function fillGulaDarahPuasa(rawValue, patient, log) {
-    const listBtnWrap = document.getElementById(
-      "div_tambahPelayananGulaDarah_btn",
-    );
-    if (listBtnWrap && isVisible(listBtnWrap)) {
-      const tambahBtn = document.getElementById("tambahPelayananGulaDarah_btn");
-      if (tambahBtn) {
-        await humanClick(tambahBtn);
-        await humanPause(300, 600);
+    let lastError = null;
+    for (let attempt = 1; attempt <= SAVE_RETRY_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        if (attempt > 1) {
+          const existing = existingPelayananNames("daftarPelayananGulaDarah");
+          if (containsLabel(existing, "Gula Darah Puasa")) {
+            log(
+              "info",
+              `${patient.nama}: Gula Darah Puasa ternyata sudah tersimpan dari percobaan sebelumnya — tidak diulang.`,
+            );
+            return;
+          }
+        }
+
+        const listBtnWrap = document.getElementById(
+          "div_tambahPelayananGulaDarah_btn",
+        );
+        if (listBtnWrap && isVisible(listBtnWrap)) {
+          const tambahBtn = document.getElementById(
+            "tambahPelayananGulaDarah_btn",
+          );
+          if (tambahBtn) {
+            await humanClick(tambahBtn);
+            await humanPause(300, 600);
+          }
+        }
+
+        const jenisSelect = document.getElementById(
+          "cb_jns_pemeriksaan_darah",
+        );
+        if (!jenisSelect)
+          throw new Error(
+            "Dropdown Jns.Pemeriksaan (Gula Darah) tidak ditemukan.",
+          );
+        const option = Array.from(jenisSelect.options).find((o) =>
+          /puasa/i.test(o.textContent),
+        );
+        if (!option)
+          throw new Error(
+            'Opsi "Gula Darah Puasa" tidak ditemukan di dropdown Jns.Pemeriksaan.',
+          );
+        jenisSelect.value = option.value;
+        jenisSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        await humanPause(200, 400);
+
+        const hasilInput = document.querySelector("#tabDet_10 #hasil_txt");
+        if (!hasilInput)
+          throw new Error("Field Hasil (Gula Darah Puasa) tidak ditemukan.");
+        await humanType(hasilInput, String(rawValue).replace(",", "."));
+
+        const simpanBtn = document.querySelector(
+          "#tabDet_10 button#simpan_btn",
+        );
+        if (!simpanBtn)
+          throw new Error("Tombol Simpan (Gula Darah) tidak ditemukan.");
+        await humanClick(simpanBtn);
+
+        const { ok, message } = await waitForSaveNotify();
+        if (!ok) {
+          throw new Error(
+            "gagal menyimpan Gula Darah Puasa" +
+              (message
+                ? ` — ${message}`
+                : " (tidak ada notifikasi konfirmasi dari PCare)."),
+          );
+        }
+        log(
+          "info",
+          `${patient.nama}: Gula Darah Puasa = ${rawValue} tersimpan (${message}).`,
+        );
+        return;
+      } catch (err) {
+        lastError = err;
+        if (attempt < SAVE_RETRY_MAX_ATTEMPTS) {
+          log(
+            "warn",
+            `${patient.nama}: percobaan ke-${attempt} simpan Gula Darah Puasa gagal — mencoba lagi (${attempt + 1}/${SAVE_RETRY_MAX_ATTEMPTS})... (${err.message})`,
+          );
+          await humanPause(600, 1000);
+        }
       }
     }
-
-    const jenisSelect = document.getElementById("cb_jns_pemeriksaan_darah");
-    if (!jenisSelect)
-      throw new Error("Dropdown Jns.Pemeriksaan (Gula Darah) tidak ditemukan.");
-    const option = Array.from(jenisSelect.options).find((o) =>
-      /puasa/i.test(o.textContent),
-    );
-    if (!option)
-      throw new Error(
-        'Opsi "Gula Darah Puasa" tidak ditemukan di dropdown Jns.Pemeriksaan.',
-      );
-    jenisSelect.value = option.value;
-    jenisSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    await humanPause(200, 400);
-
-    const hasilInput = document.querySelector("#tabDet_10 #hasil_txt");
-    if (!hasilInput)
-      throw new Error("Field Hasil (Gula Darah Puasa) tidak ditemukan.");
-    await humanType(hasilInput, String(rawValue).replace(",", "."));
-
-    const simpanBtn = document.querySelector("#tabDet_10 button#simpan_btn");
-    if (!simpanBtn)
-      throw new Error("Tombol Simpan (Gula Darah) tidak ditemukan.");
-    await humanClick(simpanBtn);
-
-    const { ok, message } = await waitForSaveNotify();
-    if (!ok) {
-      throw new Error(
-        `${patient.nama}: gagal menyimpan Gula Darah Puasa` +
-          (message
-            ? ` — ${message}`
-            : " (tidak ada notifikasi konfirmasi dari PCare)."),
-      );
-    }
-    log(
-      "info",
-      `${patient.nama}: Gula Darah Puasa = ${rawValue} tersimpan (${message}).`,
+    throw new Error(
+      `${patient.nama}: ${lastError.message} — sudah dicoba ${SAVE_RETRY_MAX_ATTEMPTS}x.`,
     );
   }
 
   async function fillHbA1c(rawValue, patient, log) {
-    const hasilInput = document.querySelector("#tabDet_11 #hasil_txt");
-    if (!hasilInput) throw new Error("Field Hasil (HbA1c) tidak ditemukan.");
-    await humanType(hasilInput, String(rawValue).replace(",", "."));
+    let lastError = null;
+    for (let attempt = 1; attempt <= SAVE_RETRY_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        // Confirmed live pattern (same signal already used to skip an already-entered
+        // HbA1c before starting): a disabled Simpan button means it's already saved —
+        // check this before retrying in case the previous attempt actually went through.
+        if (attempt > 1) {
+          const simpanCheck = document.querySelector(
+            "#tabDet_11 button#simpan_btn",
+          );
+          if (simpanCheck && simpanCheck.disabled) {
+            log(
+              "info",
+              `${patient.nama}: HbA1c ternyata sudah tersimpan dari percobaan sebelumnya — tidak diulang.`,
+            );
+            return;
+          }
+        }
 
-    const simpanBtn = document.querySelector("#tabDet_11 button#simpan_btn");
-    if (!simpanBtn) throw new Error("Tombol Simpan (HbA1c) tidak ditemukan.");
-    await humanClick(simpanBtn);
+        const hasilInput = document.querySelector("#tabDet_11 #hasil_txt");
+        if (!hasilInput)
+          throw new Error("Field Hasil (HbA1c) tidak ditemukan.");
+        await humanType(hasilInput, String(rawValue).replace(",", "."));
 
-    const { ok, message } = await waitForSaveNotify();
-    if (!ok) {
-      throw new Error(
-        `${patient.nama}: gagal menyimpan HbA1c` +
-          (message
-            ? ` — ${message}`
-            : " (tidak ada notifikasi konfirmasi dari PCare)."),
-      );
+        const simpanBtn = document.querySelector(
+          "#tabDet_11 button#simpan_btn",
+        );
+        if (!simpanBtn)
+          throw new Error("Tombol Simpan (HbA1c) tidak ditemukan.");
+        await humanClick(simpanBtn);
+
+        const { ok, message } = await waitForSaveNotify();
+        if (!ok) {
+          throw new Error(
+            "gagal menyimpan HbA1c" +
+              (message
+                ? ` — ${message}`
+                : " (tidak ada notifikasi konfirmasi dari PCare)."),
+          );
+        }
+        log(
+          "info",
+          `${patient.nama}: HbA1c = ${rawValue} tersimpan (${message}).`,
+        );
+        return;
+      } catch (err) {
+        lastError = err;
+        if (attempt < SAVE_RETRY_MAX_ATTEMPTS) {
+          log(
+            "warn",
+            `${patient.nama}: percobaan ke-${attempt} simpan HbA1c gagal — mencoba lagi (${attempt + 1}/${SAVE_RETRY_MAX_ATTEMPTS})... (${err.message})`,
+          );
+          await humanPause(600, 1000);
+        }
+      }
     }
-    log("info", `${patient.nama}: HbA1c = ${rawValue} tersimpan (${message}).`);
+    throw new Error(
+      `${patient.nama}: ${lastError.message} — sudah dicoba ${SAVE_RETRY_MAX_ATTEMPTS}x.`,
+    );
   }
 
   // Ported from the reference project's ambil_nama_pelayanan_dari_tabel()/daftar_mengandung():
