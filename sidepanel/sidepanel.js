@@ -423,7 +423,7 @@
       });
     } else if (mode === 'print') {
       const connectPrinter = document.getElementById('connectPrinterChk').checked;
-      payload.printerName = connectPrinter ? document.getElementById('printPrinterName').value.trim() || null : null;
+      payload.printerName = connectPrinter ? getSelectedPrinterName() : null;
     } else {
       payload.tenagaMedis = document.getElementById('tenagaMedisSelect').value;
     }
@@ -734,6 +734,15 @@
       showVitalsSnapshot(msg.data);
     } else if (msg.evt === 'vitalsSnapshotError') {
       appendLog('error', `Gagal mengambil data kunjungan: ${msg.message}`);
+    } else if (msg.evt === 'printerList') {
+      renderPrinterOptions(msg.printers);
+      const activeCount = msg.printers.filter((p) => !p.offline).length;
+      document.getElementById('printerStatus').textContent = msg.printers.length
+        ? `${msg.printers.length} printer terdeteksi (${activeCount} aktif/online).`
+        : 'Tidak ada printer terdeteksi di komputer ini.';
+    } else if (msg.evt === 'printerListError') {
+      document.getElementById('printerStatus').textContent = `Deteksi gagal: ${msg.message}`;
+      renderPrinterOptions([]);
     }
   }
 
@@ -772,10 +781,67 @@
     appendLog('info', 'Data kunjungan berhasil diambil dari halaman saat ini.');
   }
 
+  // ---- printer detection (Print SPP & FKPP mode) ----
+  // Requested explicitly: a real dropdown of detected printers with live status, plus
+  // auto-detect, instead of a free-typed name the user has to get exactly right. Detection
+  // goes through the (optional) native host — see background.js's LIST_PRINTERS handler and
+  // native-host/host.js's listPrintersDetailed(), which queries Win32_Printer directly for
+  // name + online/offline + which one is the Windows default (pdf-to-printer's own
+  // getPrinters() doesn't expose status at all, only name/deviceId/paperSizes).
+  const PRINTER_MANUAL_VALUE = '__manual__';
+
+  function getSelectedPrinterName() {
+    const select = document.getElementById('printerSelect');
+    if (!select.value || select.value === PRINTER_MANUAL_VALUE) {
+      return document.getElementById('printPrinterNameManual').value.trim() || null;
+    }
+    return select.value;
+  }
+
+  function updateManualPrinterVisibility() {
+    const select = document.getElementById('printerSelect');
+    const manualInput = document.getElementById('printPrinterNameManual');
+    const showManual = select.value === PRINTER_MANUAL_VALUE || select.options.length === 0;
+    manualInput.classList.toggle('hidden', !showManual);
+    manualInput.disabled = !showManual || !document.getElementById('connectPrinterChk').checked;
+  }
+
+  function renderPrinterOptions(printers) {
+    const select = document.getElementById('printerSelect');
+    select.innerHTML = '';
+    for (const p of printers) {
+      const opt = document.createElement('option');
+      opt.value = p.name;
+      opt.textContent = `${p.name} — ${p.statusText}${p.isDefault ? ' (default)' : ''}`;
+      select.appendChild(opt);
+    }
+    const manualOpt = document.createElement('option');
+    manualOpt.value = PRINTER_MANUAL_VALUE;
+    manualOpt.textContent = 'Lainnya (isi manual)...';
+    select.appendChild(manualOpt);
+
+    const defaultPrinter = printers.find((p) => p.isDefault);
+    select.value = defaultPrinter ? defaultPrinter.name : printers.length ? printers[0].name : PRINTER_MANUAL_VALUE;
+    updateManualPrinterVisibility();
+  }
+
+  function detectPrinters() {
+    document.getElementById('printerStatus').textContent = 'Mendeteksi printer...';
+    sendToBackground({ cmd: 'LIST_PRINTERS' });
+  }
+
   // ---- wiring ----
   document.getElementById('connectPrinterChk').addEventListener('change', (e) => {
-    document.getElementById('printPrinterName').disabled = !e.target.checked;
+    const on = e.target.checked;
+    document.getElementById('printerSelect').disabled = !on;
+    document.getElementById('detectPrinterBtn').disabled = !on;
+    updateManualPrinterVisibility();
+    if (on && document.getElementById('printerSelect').options.length === 0) {
+      detectPrinters(); // auto-detect the first time it's turned on, so it's rarely empty
+    }
   });
+  document.getElementById('detectPrinterBtn').addEventListener('click', detectPrinters);
+  document.getElementById('printerSelect').addEventListener('change', updateManualPrinterVisibility);
   document.getElementById('pickExcelBtn').addEventListener('click', pickExcelFile);
   document.getElementById('reconnectFileBtn').addEventListener('click', reconnectLastFile);
   document.getElementById('sheetSelect').addEventListener('change', (e) => loadSheet(e.target.value));

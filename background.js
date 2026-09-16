@@ -617,6 +617,22 @@ chrome.runtime.onConnect.addListener((port) => {
       readVitalsNow()
         .then((data) => broadcast({ evt: 'vitalsSnapshot', data }))
         .catch((err) => broadcast({ evt: 'vitalsSnapshotError', message: err?.message || String(err) }));
+    } else if (msg.cmd === 'LIST_PRINTERS') {
+      // Auto-detect requested explicitly: asks the native host to enumerate real Windows
+      // printers (name + live status: Siap/Offline/Mencetak/...) via Win32_Printer, not
+      // just whatever the user manually typed before. Gracefully reports "unavailable" if
+      // the native host isn't installed/running — this is an optional feature, not a hard
+      // requirement for the rest of the bot to work.
+      nativeSendAwait({ cmd: 'listPrinters' }, 8000).then((res) => {
+        if (res && res.ok) {
+          broadcast({ evt: 'printerList', printers: res.printers || [] });
+        } else {
+          broadcast({
+            evt: 'printerListError',
+            message: res?.error || 'Native host tidak tersedia/tidak merespons — pastikan sudah terpasang.',
+          });
+        }
+      });
     }
   });
   port.onDisconnect.addListener(() => panels.delete(port));

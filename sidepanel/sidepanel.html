@@ -66,10 +66,17 @@
         sama sudah ada, lalu mencetak SPP dan FKPP.
       </p>
       <label><input type="checkbox" id="connectPrinterChk" /> Hubungkan ke printer</label>
-      <input type="text" id="printPrinterName" placeholder="Nama printer" disabled />
+      <br />
+      <select id="printerSelect" disabled></select>
+      <button id="detectPrinterBtn" type="button" disabled>🔄 Deteksi Printer</button>
+      <br />
+      <input type="text" id="printPrinterNameManual" placeholder="Nama printer (manual)" class="hidden" disabled />
+      <div id="printerStatus" class="muted small"></div>
       <p class="muted small">
         Tidak dicentang = PDF SPP &amp; FKPP otomatis disimpan ke Downloads saja (tidak
-        dicetak fisik).
+        dicetak fisik). Deteksi printer butuh native host terpasang (fitur opsional,
+        terpisah dari ekstensi ini) — kalau belum terpasang, tetap bisa isi nama printer
+        manual lewat opsi "Lainnya..." di daftar.
       </p>
     </div>
   </section>
