@@ -137,11 +137,12 @@
   async function clickPrintButton(kind, idGuess, textPattern, log) {
     const btn = document.getElementById(idGuess) || byRoleButton(textPattern);
     if (!btn) throw new Error(`Tombol "${kind}" tidak ditemukan.`);
-    const realClicked = await requestRealClick(btn);
-    if (!realClicked) {
-      log('warn', `Klik OS asli untuk "${kind}" tidak tersedia — mencoba klik biasa (mungkin diblokir popup blocker Chrome).`);
-      await humanClick(btn);
-    }
+    
+    // Ganti native OS click (yang sering meleset karena DPI scaling) dengan DOM click biasa.
+    // Syarat: Pop-up Chrome harus diizinkan (Allowed) untuk situs pcarejkn.
+    log('info', `Mencoba klik biasa untuk "${kind}" (pastikan Pop-up blocker Chrome diizinkan)...`);
+    await humanClick(btn);
+    
     log('info', `Tombol "${kind}" diklik — menunggu tab cetak terbuka...`);
     return { clicked: true };
   }
