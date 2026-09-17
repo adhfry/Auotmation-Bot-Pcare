@@ -16,8 +16,36 @@
     logDetail,
     diagnosticSnapshot,
     fireEscapeKeyEvent,
+    fireMouseEvent,
     waitForHumanHelp,
   } = PCB.dom;
+
+  const findOpenDatepicker = () => {
+    const candidates = Array.from(document.querySelectorAll('.datepicker-days'));
+    return candidates.find((el) => el.offsetParent !== null) || null;
+  };
+
+  /**
+   * bootstrap-datepicker hides itself on an outside click via a `mousedown` listener bound
+   * on `document` — NOT on `click`. A script-invoked `el.click()` (what a plain "click
+   * elsewhere" would naively do) never fires `mousedown` at all, so it silently fails to
+   * close the calendar even though it looks like a normal click; confirmed live (clicking
+   * the "No Kartu" radio afterward did not close a lingering calendar). Dispatching a real
+   * bubbling mousedown+mouseup+click sequence on a neutral element (falling back to Escape
+   * first, which the widget also handles directly) is what actually triggers its own
+   * outside-click detection.
+   */
+  async function closeDatepickerIfOpen(dateInput) {
+    if (!findOpenDatepicker()) return;
+    fireEscapeKeyEvent(dateInput);
+    await humanPause(150, 300);
+    if (!findOpenDatepicker()) return;
+    const target = document.body;
+    fireMouseEvent(target, 'mousedown');
+    fireMouseEvent(target, 'mouseup');
+    fireMouseEvent(target, 'click');
+    await humanPause(150, 300);
+  }
 
   function fmtDateDDMMYYYY(d) {
     const date = d instanceof Date ? d : new Date(d);
@@ -68,8 +96,7 @@
       const candidates = [wantedDisplay, fmtDateMMDDYYYY(target)];
       for (const candidate of candidates) {
         await humanType(dateInput, candidate);
-        fireEscapeKeyEvent(dateInput);
-        await humanPause(250, 500);
+        await closeDatepickerIfOpen(dateInput);
         if (dateInput.value === candidate) {
           logDetail(`Tanggal ${wantedDisplay} berhasil diatur langsung (format terdeteksi: "${candidate}", tanpa kalender).`);
           return;
@@ -83,10 +110,7 @@
       );
     }
 
-    const findOpenCalendar = () => {
-      const candidates = Array.from(document.querySelectorAll('.datepicker-days'));
-      return candidates.find((el) => el.offsetParent !== null) || null;
-    };
+    const findOpenCalendar = findOpenDatepicker;
 
     // Confirmed live: a genuine manual click reliably opens this calendar, but a
     // script-dispatched DOM click (mousedown/mouseup/click) sometimes doesn't — the widget
@@ -169,15 +193,10 @@
     logDetail(`Tanggal ${fmtDateDDMMYYYY(target)} terpilih di kalender.`);
 
     // bootstrap-datepicker is supposed to close itself on day-select, but this has been
-    // observed to sometimes leave the popup lingering open on screen. Escape (and, if that
-    // somehow doesn't do it, a click elsewhere to blur the field) tidies it up rather than
-    // leaving an open calendar sitting over the form.
+    // observed to sometimes leave the popup lingering open on screen — tidy it up rather
+    // than leaving an open calendar sitting over the form.
     await humanPause(150, 300);
-    if (findOpenCalendar()) {
-      fireEscapeKeyEvent(dateInput);
-      await humanPause(150, 300);
-      if (findOpenCalendar()) document.body.click();
-    }
+    await closeDatepickerIfOpen(dateInput);
   }
 
   /**

@@ -879,6 +879,7 @@
     textOf,
     fireEnterKeyEvent,
     fireEscapeKeyEvent,
+    fireMouseEvent,
     setSelect2ValueViaJQuery,
     describeElement,
     setActiveLogger,
