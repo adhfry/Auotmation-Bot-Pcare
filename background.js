@@ -344,21 +344,43 @@ async function runPelayananForPatient(tabId, patient, tenagaMedis, myGeneration)
 
 // ---- cetak SPP & FKPP ----
 
-/** Waits for the new tab PCare opens when a print button (SPP/FKPP) is clicked, as a child of `openerTabId`. */
-function waitForChildTab(openerTabId, timeoutMs = 20000) {
+/**
+ * Waits for the new tab PCare opens when a print button (SPP/FKPP) is clicked. Normally
+ * matched via `openerTabId`, but that property isn't always populated the instant the tab
+ * is created (confirmed live: PCare's print buttons sometimes open the tab a beat late, or
+ * via a path where Chrome doesn't attribute the opener immediately) — so as a fallback we
+ * also accept ANY newly-created or newly-updated tab whose URL matches PCare's own
+ * CreatePDF endpoint, regardless of opener. 30s (up from 20s) gives PCare's server enough
+ * room on a slow day; the URL fallback means we no longer depend on openerTabId at all if
+ * it happens to be missing.
+ */
+function waitForChildTab(openerTabId, timeoutMs = 30000) {
+  const urlPattern = /\/eclaim\/Home\/CreatePDF/i;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      chrome.tabs.onCreated.removeListener(listener);
+      cleanup();
       reject(new Error('Tab PDF tidak terbuka dalam waktu yang diharapkan.'));
     }, timeoutMs);
-    function listener(tab) {
-      if (tab.openerTabId === openerTabId) {
-        clearTimeout(timer);
-        chrome.tabs.onCreated.removeListener(listener);
-        resolve(tab);
-      }
+    function isMatch(tab) {
+      return tab.openerTabId === openerTabId || (tab.url && urlPattern.test(tab.url));
     }
-    chrome.tabs.onCreated.addListener(listener);
+    function onCreated(tab) {
+      if (isMatch(tab)) settle(tab);
+    }
+    function onUpdated(tabId, info, tab) {
+      if (info.url && isMatch(tab)) settle(tab);
+    }
+    function settle(tab) {
+      cleanup();
+      resolve(tab);
+    }
+    function cleanup() {
+      clearTimeout(timer);
+      chrome.tabs.onCreated.removeListener(onCreated);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+    }
+    chrome.tabs.onCreated.addListener(onCreated);
+    chrome.tabs.onUpdated.addListener(onUpdated);
   });
 }
 
@@ -394,17 +416,31 @@ async function saveOrPrintTab(tabId, patient, kind, printerName) {
           chrome.downloads.search({ id: downloadId }, (items) => {
             const item = items && items[0];
             if (item && item.state === 'complete' && item.filename) {
-              const sent = nativeSend({ cmd: 'print', path: item.filename, printer: printerName });
-              if (sent) log('info', `${patient.nama}: ${kind} dikirim ke printer "${printerName}".`);
-              else log('warn', `${patient.nama}: native host cetak tidak tersedia — ${kind} hanya tersimpan sebagai PDF.`);
+              // nativeSendAwait (not the earlier fire-and-forget nativeSend) — host.js's
+              // `print` command DOES report back whether pdf-to-printer actually succeeded
+              // or threw (e.g. printer name mismatch, spooler error); without awaiting it
+              // we'd log "dikirim ke printer" as success even when the OS silently failed
+              // to print at all, which is exactly what was happening before this fix.
+              nativeSendAwait({ cmd: 'print', path: item.filename, printer: printerName }, 15000).then((res) => {
+                if (res && res.ok) {
+                  log('info', `${patient.nama}: ${kind} berhasil dicetak ke printer "${printerName}".`);
+                } else if (res) {
+                  log('error', `${patient.nama}: gagal mencetak ${kind} ke printer "${printerName}" — ${res.error || 'unknown'}. PDF tetap tersimpan di Downloads.`);
+                } else {
+                  log('warn', `${patient.nama}: native host cetak tidak merespons — ${kind} hanya tersimpan sebagai PDF.`);
+                }
+                resolve();
+              });
             } else if (Date.now() < searchDeadline) {
               setTimeout(trySend, 400);
             } else {
               log('warn', `${patient.nama}: tidak dapat memastikan file PDF ${kind} selesai disimpan untuk dicetak.`);
+              resolve();
             }
           });
         };
         trySend();
+        return;
       }
       resolve();
     });
