@@ -15,6 +15,8 @@
     setSelect2ValueViaJQuery,
     logDetail,
     diagnosticSnapshot,
+    fireEscapeKeyEvent,
+    waitForHumanHelp,
   } = PCB.dom;
 
   function fmtDateDDMMYYYY(d) {
@@ -40,14 +42,35 @@
    */
   async function pickDate(dateInput, targetDate) {
     const target = targetDate instanceof Date ? targetDate : new Date(targetDate);
-    logDetail(`Membuka kalender tanggal untuk memilih ${fmtDateDDMMYYYY(target)}...`);
+    const wantedDisplay = fmtDateDDMMYYYY(target);
+    logDetail(`Mengatur tanggal ke ${wantedDisplay}...`);
+
+    // Confirmed live (the same fix already proven for Pendaftaran's rujukan date
+    // correction): typing the date directly into the field, in its own real runtime
+    // format (dd-mm-yyyy — the placeholder's "yyyy-MM-dd" is misleading), then pressing
+    // Escape to close whatever popup that opens, works reliably and skips the
+    // calendar-click UI below entirely, which has repeatedly proven flaky. Tried first
+    // since it's strictly simpler; only falls through to the calendar if it doesn't stick.
+    await humanType(dateInput, wantedDisplay);
+    fireEscapeKeyEvent(dateInput);
+    await humanPause(250, 500);
+    if (dateInput.value === wantedDisplay) {
+      logDetail(`Tanggal ${wantedDisplay} berhasil diatur langsung (tanpa kalender).`);
+      return;
+    }
+    logDetail(`Ketik langsung belum berhasil (nilai saat ini: "${dateInput.value}") — mencoba lewat kalender...`);
+
+    const findOpenCalendar = () => {
+      const candidates = Array.from(document.querySelectorAll('.datepicker-days'));
+      return candidates.find((el) => el.offsetParent !== null) || null;
+    };
 
     // Confirmed live: a genuine manual click reliably opens this calendar, but a
     // script-dispatched DOM click (mousedown/mouseup/click) sometimes doesn't — the widget
     // likely needs a real, trusted click event, not a synthetic one. Try the normal DOM
     // click a couple of times first (cheap, works most of the time elsewhere), then fall
     // back to an actual OS-level click via the native host (indistinguishable from a real
-    // human click) before giving up entirely.
+    // human click) before calling for human help.
     let opened = null;
     for (let attempt = 0; attempt < 4 && !opened; attempt += 1) {
       if (attempt > 0) await humanPause(300, 600);
@@ -58,10 +81,23 @@
         const clicked = await requestRealClick(dateInput);
         if (!clicked) await humanClick(dateInput); // native host unavailable — fall back
       }
-      opened = await waitFor(() => {
-        const candidates = Array.from(document.querySelectorAll('.datepicker-days'));
-        return candidates.find((el) => el.offsetParent !== null) || null;
-      }, 3000, 150);
+      opened = await waitFor(findOpenCalendar, 3000, 150);
+    }
+
+    if (!opened) {
+      // Last resort before giving up: call for human help (audible, repeating) — check
+      // both whether the field's value now matches (they typed it directly themselves) or
+      // the calendar is now open (they clicked it open) — either resolves this without
+      // necessarily waiting out the full minute.
+      const helpResult = await waitForHumanHelp(
+        () => (dateInput.value === wantedDisplay ? 'typed' : findOpenCalendar()),
+        { log: (level, msg) => logDetail(msg), description: `bantuan mengatur tanggal ke ${wantedDisplay}` }
+      );
+      if (helpResult === 'typed') {
+        logDetail(`Tanggal ${wantedDisplay} sudah sesuai setelah dibantu — melanjutkan.`);
+        return;
+      }
+      if (helpResult) opened = helpResult;
     }
 
     if (!opened) {
@@ -72,7 +108,7 @@
       // being disabled/readonly — instead of leaving the next debugging round guessing.
       const snapshot = diagnosticSnapshot();
       throw new Error(
-        `pickDate: kalender tidak terbuka setelah beberapa percobaan klik field tanggal, termasuk klik OS asli ` +
+        `pickDate: kalender tidak terbuka setelah beberapa percobaan klik field tanggal, termasuk klik OS asli dan permintaan bantuan ` +
           `(ada ${anyDatepicker} elemen datepicker di DOM, tapi tidak ada yang terlihat terbuka; ` +
           `field: disabled=${dateInput.disabled}, readOnly=${dateInput.readOnly}, value="${dateInput.value}"; ` +
           `modal backdrop aktif=${snapshot.modalBackdrop}, body.modal-open=${snapshot.bodyModalOpen})` +

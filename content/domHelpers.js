@@ -524,6 +524,86 @@
     return el ? textOf(el) : '';
   }
 
+  // ------------------------------------------------------------------------------------
+  // Human-help alert. Requested explicitly: when the bot genuinely can't proceed on its own
+  // (the calendar won't open, Turnstile won't resolve) it should call for a human audibly
+  // and repeatedly, rather than silently retry or fail outright. Waits up to a full minute
+  // by default, but checks frequently whether the human has ALREADY fixed it — so it
+  // continues the instant help arrives instead of always waiting out the full timeout.
+  // ------------------------------------------------------------------------------------
+  let alertAudioEl = null;
+  let alertLoopTimer = null;
+
+  function playAlertOnce() {
+    try {
+      if (!alertAudioEl) alertAudioEl = new Audio(chrome.runtime.getURL('sfx/ti-nung.mp3'));
+      alertAudioEl.currentTime = 0;
+      // Best-effort: Chrome can block autoplay before this tab has any user-gesture
+      // history. Swallow the rejection — the log warning below still reaches the user
+      // even if the sound itself doesn't play.
+      alertAudioEl.play().catch(() => {});
+    } catch (_) {
+      // never let a sound failure break the actual wait logic
+    }
+  }
+
+  function startAlertLoop(intervalMs) {
+    stopAlertLoop();
+    playAlertOnce();
+    alertLoopTimer = setInterval(playAlertOnce, intervalMs);
+  }
+
+  function stopAlertLoop() {
+    if (alertLoopTimer) {
+      clearInterval(alertLoopTimer);
+      alertLoopTimer = null;
+    }
+    if (alertAudioEl) {
+      try {
+        alertAudioEl.pause();
+      } catch (_) {
+        // ignore
+      }
+    }
+  }
+
+  /**
+   * Plays the alert sound on a loop and polls `checkFn` for up to `timeoutMs` (default a
+   * full minute), stopping the sound and returning `true` the INSTANT checkFn reports the
+   * human has already resolved it — never waits out the full minute if help arrives sooner.
+   * Returns `false` if the timeout elapses with no help. Still honors Stop (throws
+   * ContentStopped) like every other wait loop in this file.
+   */
+  async function waitForHumanHelp(
+    checkFn,
+    { timeoutMs = 60000, intervalMs = 300, soundIntervalMs = 3000, log, description = 'bantuan' } = {}
+  ) {
+    log?.(
+      'warn',
+      `Bot butuh ${description} — menunggu hingga ${Math.round(timeoutMs / 1000)} detik (bunyi peringatan akan diputar berulang).`
+    );
+    startAlertLoop(soundIntervalMs);
+    const deadline = Date.now() + timeoutMs;
+    try {
+      while (Date.now() < deadline) {
+        if (stopRequested) throw new ContentStopped();
+        // Passes the actual truthy value back (not just `true`) — some callers need to
+        // know WHICH of several conditions resolved it (e.g. pickDate distinguishing "the
+        // date field's value now matches" from "the calendar is now open").
+        const result = await checkFn();
+        if (result) {
+          log?.('info', `${description}: terdeteksi sudah dibantu — melanjutkan.`);
+          return result;
+        }
+        await sleep(intervalMs);
+      }
+      log?.('warn', `${description}: tidak ada bantuan dalam ${Math.round(timeoutMs / 1000)} detik.`);
+      return false;
+    } finally {
+      stopAlertLoop();
+    }
+  }
+
   /**
    * Types `value`, waits for its own zero-padding, then NEVER clicks Cari until this
    * form's embedded Cloudflare Turnstile has genuinely produced a token — clicking while
@@ -541,14 +621,25 @@
       await humanType(input, value);
       await pressEnterAndValidateFormat(input);
 
-      const tokenReady = await waitForTurnstileToken(log, attempt === 1 ? 12000 : 20000);
+      let tokenReady = await waitForTurnstileToken(log, attempt === 1 ? 12000 : 20000);
       if (!tokenReady) {
         log?.('warn', `Turnstile belum selesai — tidak jadi klik Cari dulu (percobaan ${attempt}/${maxAttempts}), menunggu lebih lama.`);
         if (attempt < maxAttempts) {
           await humanPause(2000, 4000);
           continue; // skip the click entirely this round — clicking now is guaranteed to fail
         }
-        return false;
+        // Last resort before giving up: call for human help (audible, repeating) — an
+        // interactive Turnstile challenge sometimes needs an actual person to click it;
+        // never attempted here automatically, only waited for. Falls through to the normal
+        // click-Cari flow below if help arrives in time, instead of always failing here.
+        tokenReady = await waitForHumanHelp(
+          () => {
+            const el = document.querySelector(TURNSTILE_RESPONSE_SELECTOR);
+            return !!(el && el.value);
+          },
+          { log, description: 'bantuan menyelesaikan verifikasi Cloudflare Turnstile' }
+        );
+        if (!tokenReady) return false;
       }
 
       const cariBtn = await findCariBtn();
@@ -769,6 +860,7 @@
     blurAndValidateFormat,
     fillAndSearchWithRetry,
     waitForTurnstileToken,
+    waitForHumanHelp,
     waitForPaceLoading,
     getNotifyMessage,
     byText,

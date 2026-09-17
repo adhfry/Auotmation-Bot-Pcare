@@ -17,7 +17,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icons/*"],
+      "resources": ["icons/*", "sfx/*"],
       "matches": ["https://pcarejkn.bpjs-kesehatan.go.id/*"]
     }
   ],
