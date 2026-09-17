@@ -122,11 +122,26 @@
    * PDF — we never touch that tab's content from here (cross-origin/PDF-viewer content
    * scripts can't run inside it anyway); background.js picks it up via chrome.tabs.onCreated
    * to either save it to Downloads or hand it to the native host for a silent print.
+   *
+   * Confirmed live: this specific click MUST be a genuine OS-level click, not the usual
+   * script-dispatched `el.click()` humanClick() uses elsewhere. PCare opens the PDF via
+   * window.open(), and Chrome's popup blocker silently swallows that call unless the click
+   * carries real "user activation" — a script-invoked click never counts as trusted input,
+   * so the popup never appears and no chrome.tabs event ever fires no matter how long
+   * background.js waits. A real OS click via the native host (already used elsewhere for
+   * stubborn widgets) is indistinguishable from a human click and does carry real user
+   * activation, so it's tried first here; humanClick is only a last-resort fallback when
+   * the native host isn't installed/connected (better than nothing, even if it may still
+   * get blocked).
    */
   async function clickPrintButton(kind, idGuess, textPattern, log) {
     const btn = document.getElementById(idGuess) || byRoleButton(textPattern);
     if (!btn) throw new Error(`Tombol "${kind}" tidak ditemukan.`);
-    await humanClick(btn);
+    const realClicked = await requestRealClick(btn);
+    if (!realClicked) {
+      log('warn', `Klik OS asli untuk "${kind}" tidak tersedia — mencoba klik biasa (mungkin diblokir popup blocker Chrome).`);
+      await humanClick(btn);
+    }
     log('info', `Tombol "${kind}" diklik — menunggu tab cetak terbuka...`);
     return { clicked: true };
   }

@@ -167,6 +167,17 @@
     // day cell doesn't reliably respond to a plain .click() alone.
     await humanClick(dayCell, { alsoMouseDown: true });
     logDetail(`Tanggal ${fmtDateDDMMYYYY(target)} terpilih di kalender.`);
+
+    // bootstrap-datepicker is supposed to close itself on day-select, but this has been
+    // observed to sometimes leave the popup lingering open on screen. Escape (and, if that
+    // somehow doesn't do it, a click elsewhere to blur the field) tidies it up rather than
+    // leaving an open calendar sitting over the form.
+    await humanPause(150, 300);
+    if (findOpenCalendar()) {
+      fireEscapeKeyEvent(dateInput);
+      await humanPause(150, 300);
+      if (findOpenCalendar()) document.body.click();
+    }
   }
 
   /**
