@@ -25,6 +25,12 @@
     return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()}`;
   }
 
+  function fmtDateMMDDYYYY(d) {
+    const date = d instanceof Date ? d : new Date(d);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${date.getFullYear()}`;
+  }
+
   function escapeRegex(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
@@ -43,22 +49,39 @@
   async function pickDate(dateInput, targetDate) {
     const target = targetDate instanceof Date ? targetDate : new Date(targetDate);
     const wantedDisplay = fmtDateDDMMYYYY(target);
+    const dayNum = target.getDate();
     logDetail(`Mengatur tanggal ke ${wantedDisplay}...`);
 
-    // Confirmed live (the same fix already proven for Pendaftaran's rujukan date
-    // correction): typing the date directly into the field, in its own real runtime
-    // format (dd-mm-yyyy — the placeholder's "yyyy-MM-dd" is misleading), then pressing
-    // Escape to close whatever popup that opens, works reliably and skips the
-    // calendar-click UI below entirely, which has repeatedly proven flaky. Tried first
-    // since it's strictly simpler; only falls through to the calendar if it doesn't stick.
-    await humanType(dateInput, wantedDisplay);
-    fireEscapeKeyEvent(dateInput);
-    await humanPause(250, 500);
-    if (dateInput.value === wantedDisplay) {
-      logDetail(`Tanggal ${wantedDisplay} berhasil diatur langsung (tanpa kalender).`);
-      return;
+    // Different PCare computers have been observed running bootstrap-datepicker
+    // configured with different typed-date formats (some dd-mm-yyyy, some mm-dd-yyyy).
+    // When the day-of-month is <=12, "05-08-2026" is genuinely ambiguous — it could be
+    // read as 5 Aug or as 8 May depending on that machine's format, and simple string
+    // matching on the input's echoed value can't tell which interpretation actually took
+    // (the widget may not reformat/reject a mis-parsed value at all). Silently landing on
+    // the wrong date in a healthcare record is worse than a slower calendar click, so for
+    // ambiguous days we skip direct typing entirely and go straight to the calendar below,
+    // which selects by the day number actually rendered on screen — format-independent by
+    // construction. Only when the day is >12 (so it can only ever be the day, never a
+    // valid month) is direct typing provably safe, and even then we try both dd-mm-yyyy and
+    // mm-dd-yyyy in case this particular machine expects the other one.
+    if (dayNum > 12) {
+      const candidates = [wantedDisplay, fmtDateMMDDYYYY(target)];
+      for (const candidate of candidates) {
+        await humanType(dateInput, candidate);
+        fireEscapeKeyEvent(dateInput);
+        await humanPause(250, 500);
+        if (dateInput.value === candidate) {
+          logDetail(`Tanggal ${wantedDisplay} berhasil diatur langsung (format terdeteksi: "${candidate}", tanpa kalender).`);
+          return;
+        }
+      }
+      logDetail(`Ketik langsung (kedua format) belum berhasil (nilai saat ini: "${dateInput.value}") — mencoba lewat kalender...`);
+    } else {
+      logDetail(
+        `Tanggal ${dayNum} bisa disalahartikan sebagai bulan pada format yang berbeda — ` +
+          `langsung pakai kalender (bukan ketik langsung) demi memastikan tanggal benar.`
+      );
     }
-    logDetail(`Ketik langsung belum berhasil (nilai saat ini: "${dateInput.value}") — mencoba lewat kalender...`);
 
     const findOpenCalendar = () => {
       const candidates = Array.from(document.querySelectorAll('.datepicker-days'));
